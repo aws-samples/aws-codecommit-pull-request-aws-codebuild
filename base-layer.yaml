@@ -1,0 +1,261 @@
+# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Setup AWS workstream-specific resources for CI/CD
+Resources:
+  CodePipelineRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "codepipeline.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "AWS-CodePipeline-Service-Policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "codedeploy:*"
+                  - "s3:*"
+                  - "iam:PassRole"
+                  - "codebuild:*"
+                  - "codecommit:*"
+                  - "cloudformation:*"
+                Resource: "*"
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: cloudformation.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+        - PolicyName: "AWS-CloudFormation-Service-Policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "sqs:*"
+                  - "s3:*"
+                  - "logs:*"
+                  - "cloudwatch:*"
+                  - "cognito-identity:*"
+                  - "cognito-idp:*"
+                  - "dynamodb:*"
+                  - "events:*"
+                  - "iam:*"
+                  - "kinesis:*"
+                  - "lambda:*"
+                  - "elasticloadbalancing:*"
+                  - "elasticloadbalancingv2:*"
+                  - "sns:*"
+                  - "tag:*"
+                  - "kms:*"
+                  - "ec2:*"
+                  - "iot:*"
+                  - "xray:*"
+                  - "dax:*"
+                  - "application-autoscaling:*"
+                  - "datapipeline:*"
+                  - "apigateway:*"
+                  - "codepipeline:*"
+                  - "codecommit:*"
+                  - "codedeploy:*"
+                  - "elasticbeanstalk:*"
+                  - "opsworks:*"
+                  - "cloudformation:*"
+                  - "es:*"
+                  - "autoscaling:*"
+                Resource: "*"
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+        - PolicyName: "AWS-CodeBuild-Service-Policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:Put*"
+                  - "s3:Get*"
+                  - "logs:*"
+                  - "cloudformation:ValidateTemplate"
+                  - "codecommit:*"
+                Resource: "*"
+  LambdaManagedPolicy:
+      Type: "AWS::IAM::ManagedPolicy"
+      Properties:
+        Description: "Lambda Policy used for this stack"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Action:
+                - "codebuild:*"
+                - "codecommit:*"
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+                - "logs:GetLogEvents"
+              Resource: "*"
+  LambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Ref "LambdaManagedPolicy"
+      RoleName: "lambda-role"
+  PullRequestFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: "PullRequestFunction"
+      Description: "Triggers CodeBuild on PR's in CodeCommit"
+      Handler: "index.lambda_handler"
+      MemorySize: 128
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: "python3.6"
+      Timeout: 10
+      Code:
+        ZipFile: |
+          import datetime
+          import boto3
+
+          codecommit_client = boto3.client('codecommit')
+
+          def lambda_handler(event, context):
+              if event['detail']['event'] in ['pullRequestSourceBranchUpdated', 'pullRequestCreated']:
+                  pull_request_id = event['detail']['pullRequestId']
+                  repository_name = event['detail']['repositoryNames'][0]
+                  source_commit = event['detail']['sourceCommit']
+                  destination_commit = event['detail']['destinationCommit']
+
+                  codecommit_client.post_comment_for_pull_request(
+                    pullRequestId = pull_request_id,
+                    repositoryName = repository_name,
+                    beforeCommitId = source_commit,
+                    afterCommitId = destination_commit,
+                    content = '**Build started at {}**'.format(datetime.datetime.utcnow().time())
+                  )
+  CodeBuildResultFuction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: "CodeBuildResultFuction"
+      Description: "Triggers And updates CodeCommit with information from PR's"
+      Handler: "index.lambda_handler"
+      MemorySize: 128
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: "python3.6"
+      Timeout: 10
+      Code:
+        ZipFile: |
+          import boto3
+
+          codecommit_client = boto3.client('codecommit')
+
+          def lambda_handler(event, context):
+              for item in event['detail']['additional-information']['environment']['environment-variables']:
+                  if item['name'] == 'pullRequestId': pull_request_id = item['value']
+                  if item['name'] == 'repositoryName': repository_name = item['value']
+                  if item['name'] == 'sourceCommit': before_commit_id = item['value']
+                  if item['name'] == 'destinationCommit': after_commit_id = item['value']
+
+              for phase in event['detail']['additional-information']['phases']:
+                  if phase.get('phase-status') == 'FAILED':
+                      badge = 'https://s3-{0}.amazonaws.com/codefactory-{0}-prod-default-build-badges/failing.svg'.format(event['region'])
+                      content = '![Failing]({0} "Failing") - See the [Logs]({1})'.format(badge, event['detail']['additional-information']['logs']['deep-link'])
+                      break
+                  else:
+                      badge = 'https://s3-{0}.amazonaws.com/codefactory-{0}-prod-default-build-badges/passing.svg'.format(event['region'])
+                      content = '![Passing]({0} "Passing") - See the [Logs]({1})'.format(badge, event['detail']['additional-information']['logs']['deep-link'])
+
+              codecommit_client.post_comment_for_pull_request(
+                pullRequestId = pull_request_id,
+                repositoryName = repository_name,
+                beforeCommitId = before_commit_id,
+                afterCommitId = after_commit_id,
+                content = content
+              )
+  CWEManagedPolicy:
+    Type: "AWS::IAM::ManagedPolicy"
+    Properties:
+      Description: "CloudWatch Events Policy used for this stack"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Action:
+              - "codebuild:StartBuild"
+            Resource: "*"
+  CWERole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "events.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Ref "CWEManagedPolicy"
+Outputs:
+  CodeBuildResultFuctionArn:
+    Description: The ARN of the CodeCommit PR Building Function
+    Value: !GetAtt CodeBuildResultFuction.Arn
+    Export:
+      Name: "CodeBuildResultFuctionArn"
+  PullRequestFunctionArn:
+    Description: The ARN of the CodeBuild Function
+    Value: !GetAtt PullRequestFunction.Arn
+    Export:
+      Name: "PullRequestFunctionArn"
+  CodeBuildRoleArn:
+    Description: 'The ARN of the CodeBuild Role'
+    Value: !GetAtt CodeBuildRole.Arn
+    Export:
+      Name: "CodeBuildRoleArn"
+  CodePipelineRoleArn:
+    Description: 'The ARN of the CodePipeline Role'
+    Value: !GetAtt CodePipelineRole.Arn
+    Export:
+      Name: "CodePipelineRoleArn"
+  CloudFormationRoleArn:
+    Description: 'The ARN of the Cloudformation Role'
+    Value: !GetAtt CloudFormationRole.Arn
+    Export:
+      Name: "CloudFormationRoleArn"
+  CloudWatchEventsRoleArn:
+    Description: 'The ARN of the Cloudformation Role'
+    Value: !GetAtt CWERole.Arn
+    Export:
+      Name: "CloudWatchEventsRoleArn"
