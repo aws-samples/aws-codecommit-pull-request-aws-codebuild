@@ -2,7 +2,7 @@
 
 This repository contains sample code referenced in the blog post:
 
-[Validating AWS CodeCommit Pull Requests with AWS CodeBuild and AWS Lambda](https://aws..amazon.com/blogs/devops/validating-aws-codecommit-pull-requests-with-aws-codebuild-and-aws-lambda/)
+[Validating AWS CodeCommit Pull Requests with AWS CodeBuild and AWS Lambda](https://aws.amazon.com/blogs/devops/validating-aws-codecommit-pull-requests-with-aws-codebuild-and-aws-lambda/)
 
 ## License Summary
 
