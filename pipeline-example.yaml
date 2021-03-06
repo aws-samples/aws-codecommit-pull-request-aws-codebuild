@@ -196,7 +196,7 @@ Resources:
       - Name: Email
         DestinationArn: !Ref PipelineSNSTopic
         Branches:
-        - master
+        - main
         Events:
         - all
   CodeBuildProject:
@@ -246,7 +246,7 @@ Resources:
               OutputArtifacts:
                 - Name: "TemplateSource"
               Configuration:
-                BranchName: "master"
+                BranchName: "main"
                 RepositoryName: !Ref ProjectName
               RunOrder: 1
         - Name: Build
